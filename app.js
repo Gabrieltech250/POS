@@ -62,6 +62,8 @@ const Lock = (p) => <Icon {...p}><rect x="5" y="11" width="14" height="9" rx="1.
 const Menu = (p) => <Icon {...p}><line x1="4" y1="6" x2="20" y2="6" /><line x1="4" y1="12" x2="20" y2="12" /><line x1="4" y1="18" x2="20" y2="18" /></Icon>;
 const PanelLeftClose = (p) => <Icon {...p}><rect x="3" y="4" width="18" height="16" rx="2" /><line x1="10" y1="4" x2="10" y2="20" /><path d="M7 10l2 2-2 2" /></Icon>;
 const Bluetooth = (p) => <Icon {...p}><path d="M7 7l10 10-5 5V2l5 5L7 17" /></Icon>;
+const Pencil = (p) => <Icon {...p}><path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5Z" /></Icon>;
+const Check = (p) => <Icon {...p}><path d="M20 6 9 17l-5-5" /></Icon>;
 
 
 
@@ -457,7 +459,7 @@ function App() {
             {view === "dashboard" && <Dashboard t={t} products={products} lowStock={lowStock} outStock={outStock} customers={customers} transactions={transactions} sales={sales} />}
             {view === "pos" && (
               <POS t={t} products={products} setProducts={setProducts} cart={cart} setCart={setCart}
-                categories={categories}
+                categories={categories} role={role}
                 discountPct={discountPct} setDiscountPct={setDiscountPct} payMethod={payMethod} setPayMethod={setPayMethod}
                 customers={customers} cashierName={cashierName} businessInfo={businessInfo}
                 onComplete={(sale) => {
@@ -849,11 +851,14 @@ function Dashboard({ t, products, lowStock, outStock, customers, transactions, s
 }
 
 /* ---------------------------------- POS / sales ---------------------------------- */
-function POS({ t, products, setProducts, categories, cart, setCart, discountPct, setDiscountPct, payMethod, setPayMethod, customers, cashierName, businessInfo, onComplete }) {
+function POS({ t, products, setProducts, categories, role, cart, setCart, discountPct, setDiscountPct, payMethod, setPayMethod, customers, cashierName, businessInfo, onComplete }) {
   const [query, setQuery] = useState("");
   const [cat, setCat] = useState("All");
   const [customerId, setCustomerId] = useState(1);
+  const [editingId, setEditingId] = useState(null);
+  const [editPriceValue, setEditPriceValue] = useState("");
   const vatRate = (businessInfo.vatRate ?? 16) / 100;
+  const canEditPrice = role === "Administrator" || role === "Manager";
 
   const filtered = products.filter(p =>
     (cat === "All" || p.category === cat) &&
@@ -868,11 +873,20 @@ function POS({ t, products, setProducts, categories, cart, setCart, discountPct,
         if (existing.qty >= p.qty) return c;
         return c.map(i => i.id === p.id ? { ...i, qty: i.qty + 1 } : i);
       }
-      return [...c, { id: p.id, name: p.name, price: p.sell, qty: 1, max: p.qty }];
+      return [...c, { id: p.id, name: p.name, price: p.sell, origPrice: p.sell, qty: 1, max: p.qty }];
     });
   };
   const changeQty = (id, delta) => setCart(c => c.map(i => i.id === id ? { ...i, qty: Math.max(1, Math.min(i.max, i.qty + delta)) } : i));
   const removeItem = (id) => setCart(c => c.filter(i => i.id !== id));
+
+  const startEditPrice = (item) => { setEditingId(item.id); setEditPriceValue(String(item.price)); };
+  const cancelEditPrice = () => { setEditingId(null); setEditPriceValue(""); };
+  const confirmEditPrice = (id) => {
+    const val = Number(editPriceValue);
+    if (isNaN(val) || val < 0) { setEditingId(null); setEditPriceValue(""); return; }
+    setCart(c => c.map(i => i.id === id ? { ...i, price: val } : i));
+    setEditingId(null); setEditPriceValue("");
+  };
 
   const subtotal = cart.reduce((a, i) => a + i.price * i.qty, 0);
   const discountAmt = Math.round(subtotal * (discountPct / 100));
@@ -944,22 +958,48 @@ function POS({ t, products, setProducts, categories, cart, setCart, discountPct,
         </div>
         <div style={{ flex: 1, overflowY: "auto", padding: 14 }}>
           {cart.length === 0 && <div style={{ color: t.sub, fontSize: 12.5, textAlign: "center", marginTop: 30 }}>Cart is empty — tap a product to add it.</div>}
-          {cart.map(i => (
-            <div key={i.id} style={{ marginBottom: 12, paddingBottom: 12, borderBottom: `1px solid ${t.border}` }}>
-              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12.5, fontWeight: 600, marginBottom: 6 }}>
-                <span>{i.name}</span>
-                <button onClick={() => removeItem(i.id)} style={{ background: "none", border: "none", color: palette.danger, cursor: "pointer" }}><Trash2 size={13} /></button>
-              </div>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  <button onClick={() => changeQty(i.id, -1)} style={{ width: 22, height: 22, borderRadius: 6, border: `1px solid ${t.border}`, background: "transparent", color: t.text, cursor: "pointer" }}><Minus size={11} /></button>
-                  <span style={{ fontSize: 12.5, fontWeight: 700, width: 18, textAlign: "center" }}>{i.qty}</span>
-                  <button onClick={() => changeQty(i.id, 1)} style={{ width: 22, height: 22, borderRadius: 6, border: `1px solid ${t.border}`, background: "transparent", color: t.text, cursor: "pointer" }}><Plus size={11} /></button>
+          {cart.map(i => {
+            const editing = editingId === i.id;
+            const wasOverridden = i.origPrice !== undefined && i.price !== i.origPrice;
+            return (
+              <div key={i.id} style={{ marginBottom: 12, paddingBottom: 12, borderBottom: `1px solid ${t.border}` }}>
+                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12.5, fontWeight: 600, marginBottom: 6 }}>
+                  <span>{i.name}</span>
+                  <button onClick={() => removeItem(i.id)} style={{ background: "none", border: "none", color: palette.danger, cursor: "pointer" }}><Trash2 size={13} /></button>
                 </div>
-                <span style={{ fontSize: 12.5, fontWeight: 700 }}>{fmtKES(i.price * i.qty)}</span>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 6 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <button onClick={() => changeQty(i.id, -1)} style={{ width: 22, height: 22, borderRadius: 6, border: `1px solid ${t.border}`, background: "transparent", color: t.text, cursor: "pointer" }}><Minus size={11} /></button>
+                    <span style={{ fontSize: 12.5, fontWeight: 700, width: 18, textAlign: "center" }}>{i.qty}</span>
+                    <button onClick={() => changeQty(i.id, 1)} style={{ width: 22, height: 22, borderRadius: 6, border: `1px solid ${t.border}`, background: "transparent", color: t.text, cursor: "pointer" }}><Plus size={11} /></button>
+                  </div>
+
+                  {editing ? (
+                    <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                      <span style={{ fontSize: 11, color: t.sub }}>{businessInfo.currency || "KES"}</span>
+                      <input type="number" autoFocus value={editPriceValue} onChange={e => setEditPriceValue(e.target.value)}
+                        onKeyDown={e => { if (e.key === "Enter") confirmEditPrice(i.id); if (e.key === "Escape") cancelEditPrice(); }}
+                        style={{ width: 72, padding: "4px 6px", borderRadius: 6, border: `1px solid ${palette.wine}`, background: "transparent", color: t.text, fontSize: 12.5 }} />
+                      <button onClick={() => confirmEditPrice(i.id)} title="Confirm price" style={{ background: "none", border: "none", color: palette.success, cursor: "pointer", padding: 2 }}><Check size={14} /></button>
+                      <button onClick={cancelEditPrice} title="Cancel" style={{ background: "none", border: "none", color: t.sub, cursor: "pointer", padding: 2 }}><X size={14} /></button>
+                    </div>
+                  ) : (
+                    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                      <span style={{ fontSize: 12.5, fontWeight: 700 }}>{fmtKES(i.price * i.qty)}</span>
+                      {canEditPrice && (
+                        <button onClick={() => startEditPrice(i)} title="Edit unit price" style={{ background: "none", border: "none", color: t.sub, cursor: "pointer", padding: 2 }}><Pencil size={12} /></button>
+                      )}
+                    </div>
+                  )}
+                </div>
+                {wasOverridden && !editing && (
+                  <div style={{ fontSize: 10, color: palette.gold, marginTop: 4, textAlign: "right" }}>
+                    Price adjusted from {fmtKES(i.origPrice)}
+                  </div>
+                )}
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
         <div style={{ padding: 14, borderTop: `1px solid ${t.border}` }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
